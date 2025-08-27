@@ -4,38 +4,54 @@ using UnityEngine;
 
 namespace Globe.Tectonics
 {
+    public enum PlateKind : byte { Oceanic = 0, Continental = 1 }
+    public enum BoundaryType : byte { None = 0, Convergent = 1, Divergent = 2, Transform = 3 }
+
     public sealed class PlateConfig
     {
         public int SeedCount = 12;
         public float MinDegPerSec = 0.0f;
-        public float MaxDegPerSec = 1.5f;  // visual speed; tune freely
+        public float MaxDegPerSec = 1.5f;
+        public float ContinentalFraction = 0.5f; // ~equal by default
     }
 
     public sealed class PlateState
     {
         public int PlateCount;
-        public Vector3[] EulerPoles;  // unit vectors
-        public float[] DegPerSec;   // angular speeds
-        public int[] CellToPlate; // length = number of cells
-        public Vector3[] CellVel;     // per-cell tangential velocity (world units/sec)
-        public float[] Elevation;   // per-cell height signal
-    }
+        public Vector3[] EulerPoles;
+        public float[] DegPerSec;
+        public PlateKind[] PlateKinds;     // length = PlateCount
 
-    public enum BoundaryType : byte { None = 0, Convergent = 1, Divergent = 2, Transform = 3 }
+        public int[] CellToPlate;      // length = numCells
+        public Vector3[] CellVel;          // per-cell tangential velocity
+        public float[] Elevation;        // per-cell elevation
+    }
 
     public struct BoundaryInfo
     {
-        public int A, B;           // neighboring cell indices
-        public float Rate;         // + convergent, - divergent (units of speed)
+        public int A, B;          // neighboring cells
+        public float Rate;        // +convergent, -divergent
         public BoundaryType Kind;
     }
 
     public sealed class PlateParams
     {
-        public float UpliftPerUnitConvergence = 0.8f;  // height/sec per unit of convergence speed
-        public float SubsidencePerUnitDivergence = 0.2f;
-        public float Diffusion = 0.6f;                // simple Laplacian diffusion coefficient
-        public float Dt = 0.02f;                      // seconds per simulation tick
+        // Base levels (arbitrary units; your shader scale maps these to meters)
+        public float ContinentalBase = +0.6f;
+        public float OceanicBase = -0.6f;
+
+        // Uplift/subsidence scalars (per unit relative speed)
+        public float Uplift_CC = 1.2f;   // continent–continent collision
+        public float Uplift_CO = 0.9f;   // continental side uplift at C–O
+        public float Uplift_OO = 0.6f;   // ocean–ocean island arcs
+
+        public float Trench_CO = 0.7f;   // oceanic side trench at C–O
+        public float Trench_OO = 0.4f;   // one oceanic side trench at O–O
+
+        public float DivergenceSubsidence = 0.25f; // mid-ocean ridges
+        public float Diffusion = 0.6f;             // erosion/isostasy blur
+        public float BaseRelax = 0.05f;            // relax toward base level
+        public float Dt = 0.02f;
     }
 
     public static class PlateSolver
@@ -45,15 +61,17 @@ namespace Globe.Tectonics
         {
             int N = dual.CellPositions.Count;
             int K = Mathf.Clamp(cfg.SeedCount, 1, Mathf.Max(1, N));
+
+            // pick seed cells
             var seeds = new List<int>(K);
             var used = new HashSet<int>();
-
             while (seeds.Count < K)
             {
                 int s = rng.Next(0, N);
                 if (used.Add(s)) seeds.Add(s);
             }
 
+            // spherical Voronoi (nearest seed by max dot)
             var cellToPlate = new int[N];
             var seedDirs = new Vector3[K];
             for (int k = 0; k < K; k++) seedDirs[k] = dual.CellPositions[seeds[k]].normalized;
@@ -65,31 +83,47 @@ namespace Globe.Tectonics
                 float bestDot = Vector3.Dot(r, seedDirs[0]);
                 for (int k = 1; k < K; k++)
                 {
-                    float d = Vector3.Dot(r, seedDirs[k]); // max dot == min great-circle distance
+                    float d = Vector3.Dot(r, seedDirs[k]);
                     if (d > bestDot) { bestDot = d; best = k; }
                 }
                 cellToPlate[i] = best;
             }
 
-            // Random Euler poles and speeds
+            // Euler poles & speeds
             var euler = new Vector3[K];
             var wDeg = new float[K];
             for (int k = 0; k < K; k++)
             {
-                // random direction on sphere
                 euler[k] = RandomOnSphere(rng);
                 wDeg[k] = Mathf.Lerp(cfg.MinDegPerSec, cfg.MaxDegPerSec, (float)rng.NextDouble());
             }
 
+            // Plate kinds ~50/50 (exact count rounded)
+            var kinds = new PlateKind[K];
+            int numContinental = Mathf.RoundToInt(cfg.ContinentalFraction * K);
+            // mark first numContinental as continental, shuffle
+            for (int k = 0; k < K; k++) kinds[k] = (k < numContinental) ? PlateKind.Continental : PlateKind.Oceanic;
+            // Fisher–Yates shuffle
+            for (int k = K - 1; k > 0; k--)
+            {
+                int j = rng.Next(k + 1);
+                (kinds[k], kinds[j]) = (kinds[j], kinds[k]);
+            }
+
+            // Allocate state
             state = new PlateState
             {
                 PlateCount = K,
                 EulerPoles = euler,
                 DegPerSec = wDeg,
+                PlateKinds = kinds,
                 CellToPlate = cellToPlate,
                 CellVel = new Vector3[N],
                 Elevation = new float[N],
             };
+
+            // Initialize base elevation per cell by plate kind
+            // (we don't know params here, so store zero; caller will do a base relax step on first update)
         }
 
         public static Vector3 RandomOnSphere(System.Random rng)
@@ -168,43 +202,89 @@ namespace Globe.Tectonics
             }
         }
 
-        public static void StepTopography(GeodesicData g, PlateState state, List<BoundaryInfo> boundaries, PlateParams prm)
+        public static void StepTopography(
+            GeodesicData g,
+            DualData dual,
+            PlateState st,
+            List<BoundaryInfo> boundaries,
+            PlateParams prm)
         {
-            int N = state.Elevation.Length;
+            int N = st.Elevation.Length;
 
-            // Accumulate sources/sinks from boundaries
+            // 1) Accumulate sources/sinks from boundaries
             var source = new float[N];
+
             foreach (var b in boundaries)
             {
                 if (b.Kind == BoundaryType.Convergent)
                 {
-                    float s = prm.UpliftPerUnitConvergence * b.Rate;
-                    source[b.A] += s * 0.5f;
-                    source[b.B] += s * 0.5f;
+                    int pa = st.CellToPlate[b.A];
+                    int pb = st.CellToPlate[b.B];
+                    var ka = st.PlateKinds[pa];
+                    var kbKind = st.PlateKinds[pb]; // <-- renamed so no conflict
+
+                    if (ka == PlateKind.Continental && kbKind == PlateKind.Continental)
+                    {
+                        float s = prm.Uplift_CC * b.Rate;
+                        source[b.A] += 0.5f * s;
+                        source[b.B] += 0.5f * s;
+                    }
+                    else if (ka == PlateKind.Continental && kbKind == PlateKind.Oceanic)
+                    {
+                        source[b.A] += prm.Uplift_CO * b.Rate;
+                        source[b.B] -= prm.Trench_CO * b.Rate;
+                    }
+                    else if (ka == PlateKind.Oceanic && kbKind == PlateKind.Continental)
+                    {
+                        source[b.B] += prm.Uplift_CO * b.Rate;
+                        source[b.A] -= prm.Trench_CO * b.Rate;
+                    }
+                    else // O–O
+                    {
+                        float sUp = prm.Uplift_OO * b.Rate * 0.5f;
+                        float sTrch = prm.Trench_OO * b.Rate * 0.5f;
+                        source[b.A] += sUp - sTrch;
+                        source[b.B] += sUp - sTrch;
+                    }
                 }
                 else if (b.Kind == BoundaryType.Divergent)
                 {
-                    float s = prm.SubsidencePerUnitDivergence * (-b.Rate);
-                    source[b.A] -= s * 0.5f;
-                    source[b.B] -= s * 0.5f;
+                    float s = prm.DivergenceSubsidence * (-b.Rate);
+                    source[b.A] -= 0.5f * s;
+                    source[b.B] -= 0.5f * s;
                 }
-                // transform: ignore or add small shear noise if desired
             }
 
-            // Explicit diffusion (graph Laplacian on cell adjacency)
+            // 2) Base level relaxation (continental high, oceanic low)
+            var baseLevel = new float[N];
+            for (int i = 0; i < N; i++)
+            {
+                int p = st.CellToPlate[i];
+                baseLevel[i] = (st.PlateKinds[p] == PlateKind.Continental)
+                    ? prm.ContinentalBase
+                    : prm.OceanicBase;
+            }
+
+            // 3) Explicit diffusion + base relax + sources
             float dt = prm.Dt;
-            float k = prm.Diffusion;
+            float kDiff = prm.Diffusion;
+            float kBase = prm.BaseRelax;   // renamed var so no clash
+
             var next = new float[N];
             for (int i = 0; i < N; i++)
             {
                 float lap = 0f;
                 var nbrs = g.VertexNeighbors[i];
                 for (int t = 0; t < nbrs.Count; t++)
-                    lap += (state.Elevation[nbrs[t]] - state.Elevation[i]);
-                next[i] = state.Elevation[i] + (source[i] + k * lap) * dt;
+                    lap += (st.Elevation[nbrs[t]] - st.Elevation[i]);
+
+                float towardBase = (baseLevel[i] - st.Elevation[i]) * kBase;
+
+                next[i] = st.Elevation[i] + (source[i] + kDiff * lap + towardBase) * dt;
             }
+
             // Commit
-            for (int i = 0; i < N; i++) state.Elevation[i] = next[i];
+            for (int i = 0; i < N; i++) st.Elevation[i] = next[i];
         }
     }
 }

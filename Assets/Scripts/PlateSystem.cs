@@ -12,11 +12,19 @@ namespace Globe.Tectonics
         public int randomSeed = 12345;
         public float minDegPerSec = 0.0f;
         public float maxDegPerSec = 1.2f;
+        [Range(0f, 1f)] public float continentalFraction = 0.5f; // NEW
 
         [Header("Topography")]
-        public float upliftPerConv = 0.8f;
-        public float subsidencePerDiv = 0.2f;
+        public float continentalBase = +0.6f; // NEW
+        public float oceanicBase = -0.6f; // NEW
+        public float uplift_CC = 1.2f;
+        public float uplift_CO = 0.9f;
+        public float uplift_OO = 0.6f;
+        public float trench_CO = 0.7f;
+        public float trench_OO = 0.4f;
+        public float divergenceSubs = 0.25f;
         public float diffusion = 0.6f;
+        public float baseRelax = 0.05f; // NEW
         public float dt = 0.02f;
         public bool runSimulation = true;
         public bool colorBoundaries = true;
@@ -49,16 +57,23 @@ namespace Globe.Tectonics
             if (!EnsureReady()) return;
 
             // keep params in sync with inspector
-            _params.UpliftPerUnitConvergence = upliftPerConv;
-            _params.SubsidencePerUnitDivergence = subsidencePerDiv;
+            _params.ContinentalBase = continentalBase;
+            _params.OceanicBase = oceanicBase;
+            _params.Uplift_CC = uplift_CC;
+            _params.Uplift_CO = uplift_CO;
+            _params.Uplift_OO = uplift_OO;
+            _params.Trench_CO = trench_CO;
+            _params.Trench_OO = trench_OO;
+            _params.DivergenceSubsidence = divergenceSubs;
             _params.Diffusion = diffusion;
+            _params.BaseRelax = baseRelax;
             _params.Dt = dt;
 
             // velocities + boundaries + topo step
             PlateSolver.UpdateVelocities(_gen.Dual, _state);
             PlateSolver.ClassifyBoundaries(_gen.Geodesic, _gen.Dual, _state, _boundaries);
             if (runSimulation)
-                PlateSolver.StepTopography(_gen.Geodesic, _state, _boundaries, _params);
+                PlateSolver.StepTopography(_gen.Geodesic, _gen.Dual, _state, _boundaries, _params);
 
             ApplyColorsToDual();
         }
@@ -71,6 +86,7 @@ namespace Globe.Tectonics
             _cfg.SeedCount = Mathf.Max(1, seedCount);
             _cfg.MinDegPerSec = minDegPerSec;
             _cfg.MaxDegPerSec = Mathf.Max(minDegPerSec, maxDegPerSec);
+            _cfg.ContinentalFraction = Mathf.Clamp01(continentalFraction);
 
             PlateSolver.SeedAndPartition(_rng, _gen.Dual, _cfg, out _state);
             _lastCellCount = _gen.Dual.CellPositions.Count;
@@ -105,6 +121,13 @@ namespace Globe.Tectonics
                 if (_state != null && _state.Elevation != null)
                 {
                     for (int i = 0; i < _state.Elevation.Length; i++) _state.Elevation[i] = 0f;
+                }
+                for (int i = 0; i < _state.Elevation.Length; i++)
+                {
+                    var p = _state.CellToPlate[i];
+                    _state.Elevation[i] = (_state.PlateKinds[p] == PlateKind.Continental)
+                        ? continentalBase * 0.8f
+                        : oceanicBase * 0.8f;
                 }
             }
 
