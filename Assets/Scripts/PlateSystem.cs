@@ -88,15 +88,24 @@ namespace Globe.Tectonics
         [ContextMenu("Reseed Plates")]
         public void ReseedPlates()
         {
-            if (_gen == null || _gen.Dual == null || _gen.Dual.CellPositions == null) return;
-
             _cfg.SeedCount = Mathf.Max(1, seedCount);
             _cfg.MinDegPerSec = minDegPerSec;
             _cfg.MaxDegPerSec = Mathf.Max(minDegPerSec, maxDegPerSec);
             _cfg.ContinentalFraction = Mathf.Clamp01(continentalFraction);
+            _cfg.BalancedGrowth = true; // or expose as an inspector toggle
 
-            PlateSolver.SeedAndPartition(_rng, _gen.Dual, _cfg, out _state);
+            PlateSolver.SeedAndPartition(_rng, _gen.Geodesic, _gen.Dual, _cfg, out _state);
             _lastCellCount = _gen.Dual.CellPositions.Count;
+
+            // Initialize elevation toward base levels so continents/oceans are visible immediately
+            for (int i = 0; i < _state.Elevation.Length; i++)
+            {
+                var p = _state.CellToPlate[i];
+                _state.Elevation[i] = (_state.PlateKinds[p] == PlateKind.Continental)
+                    ? continentalBase * 0.8f
+                    : oceanicBase * 0.8f;
+            }
+
         }
 
         /// <summary>

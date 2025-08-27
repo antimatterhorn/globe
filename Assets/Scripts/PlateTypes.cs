@@ -13,6 +13,8 @@ namespace Globe.Tectonics
         public float MinDegPerSec = 0.0f;
         public float MaxDegPerSec = 1.5f;
         public float ContinentalFraction = 0.5f; // ~equal by default
+        public bool BalancedGrowth = true; // favor smaller plates when choosing which frontier grows next
+
     }
 
     public sealed class PlateState
@@ -57,12 +59,16 @@ namespace Globe.Tectonics
     public static class PlateSolver
     {
         // Spherical Voronoi partition from random seeds
-        public static void SeedAndPartition(System.Random rng, DualData dual, PlateConfig cfg, out PlateState state)
+        public static void SeedAndPartition(System.Random rng, GeodesicData g, DualData dual, PlateConfig cfg, out PlateState state)
         {
             int N = dual.CellPositions.Count;
             int K = Mathf.Clamp(cfg.SeedCount, 1, Mathf.Max(1, N));
 
-            // pick seed cells
+            // --- 0) Safety: ensure neighbor graph exists
+            if (g.VertexNeighbors == null || g.VertexNeighbors.Count != N)
+                throw new System.InvalidOperationException("GeodesicData.VertexNeighbors not built or size mismatch with dual cells.");
+
+            // --- 1) Choose K unique seed cells
             var seeds = new List<int>(K);
             var used = new HashSet<int>();
             while (seeds.Count < K)
@@ -71,25 +77,12 @@ namespace Globe.Tectonics
                 if (used.Add(s)) seeds.Add(s);
             }
 
-            // spherical Voronoi (nearest seed by max dot)
-            var cellToPlate = new int[N];
-            var seedDirs = new Vector3[K];
-            for (int k = 0; k < K; k++) seedDirs[k] = dual.CellPositions[seeds[k]].normalized;
+            // --- 2) Assign plate kinds (~50/50) and kinematics
+            var kinds = new PlateKind[K];
+            int numC = Mathf.RoundToInt(cfg.ContinentalFraction * K);
+            for (int k = 0; k < K; k++) kinds[k] = (k < numC) ? PlateKind.Continental : PlateKind.Oceanic;
+            for (int k = K - 1; k > 0; k--) { int j = rng.Next(k + 1); (kinds[k], kinds[j]) = (kinds[j], kinds[k]); }
 
-            for (int i = 0; i < N; i++)
-            {
-                Vector3 r = dual.CellPositions[i].normalized;
-                int best = 0;
-                float bestDot = Vector3.Dot(r, seedDirs[0]);
-                for (int k = 1; k < K; k++)
-                {
-                    float d = Vector3.Dot(r, seedDirs[k]);
-                    if (d > bestDot) { bestDot = d; best = k; }
-                }
-                cellToPlate[i] = best;
-            }
-
-            // Euler poles & speeds
             var euler = new Vector3[K];
             var wDeg = new float[K];
             for (int k = 0; k < K; k++)
@@ -98,19 +91,104 @@ namespace Globe.Tectonics
                 wDeg[k] = Mathf.Lerp(cfg.MinDegPerSec, cfg.MaxDegPerSec, (float)rng.NextDouble());
             }
 
-            // Plate kinds ~50/50 (exact count rounded)
-            var kinds = new PlateKind[K];
-            int numContinental = Mathf.RoundToInt(cfg.ContinentalFraction * K);
-            // mark first numContinental as continental, shuffle
-            for (int k = 0; k < K; k++) kinds[k] = (k < numContinental) ? PlateKind.Continental : PlateKind.Oceanic;
-            // Fisher–Yates shuffle
-            for (int k = K - 1; k > 0; k--)
+            // --- 3) Region-growing partition
+            var cellToPlate = new int[N];
+            for (int i = 0; i < N; i++) cellToPlate[i] = -1;
+
+            // Each plate maintains a "frontier" of candidate cells to annex next
+            var frontiers = new List<List<int>>(K);
+            var inFrontier = new bool[N]; // global guard to reduce duplicates (best effort)
+
+            for (int k = 0; k < K; k++)
             {
-                int j = rng.Next(k + 1);
-                (kinds[k], kinds[j]) = (kinds[j], kinds[k]);
+                frontiers.Add(new List<int>(16));
+                int s = seeds[k];
+                cellToPlate[s] = k; // claim the seed
+                                    // seed frontier with unclaimed neighbors
+                foreach (var nb in g.VertexNeighbors[s])
+                {
+                    if (cellToPlate[nb] == -1 && !inFrontier[nb]) { frontiers[k].Add(nb); inFrontier[nb] = true; }
+                }
             }
 
-            // Allocate state
+            // For balanced growth, we’ll prefer plates with fewer cells when choosing who grows next
+            var plateSizes = new int[K];
+            for (int k = 0; k < K; k++) plateSizes[k] = 1;
+
+            int claimed = K;
+            int safety = N * 10; // hard cap to avoid infinite loop in pathological cases
+
+            while (claimed < N && safety-- > 0)
+            {
+                // Gather candidates: plates with non-empty frontiers
+                var candidates = s_tempList; candidates.Clear();
+                for (int k = 0; k < K; k++) if (frontiers[k].Count > 0) candidates.Add(k);
+                if (candidates.Count == 0) break; // should not happen often; disconnected leftovers may occur on weird graphs
+
+                int chosenPlate;
+                if (cfg.BalancedGrowth)
+                {
+                    // 70% choose one of the smallest plates; 30% random among candidates
+                    if (rng.NextDouble() < 0.7)
+                    {
+                        int minSize = int.MaxValue;
+                        s_minList.Clear();
+                        foreach (var k in candidates)
+                        {
+                            int sz = plateSizes[k];
+                            if (sz < minSize) { minSize = sz; s_minList.Clear(); s_minList.Add(k); }
+                            else if (sz == minSize) s_minList.Add(k);
+                        }
+                        chosenPlate = s_minList[rng.Next(s_minList.Count)];
+                    }
+                    else
+                    {
+                        chosenPlate = candidates[rng.Next(candidates.Count)];
+                    }
+                }
+                else
+                {
+                    chosenPlate = candidates[rng.Next(candidates.Count)];
+                }
+
+                // Take a random cell from this plate's frontier
+                var frontier = frontiers[chosenPlate];
+                int idx = rng.Next(frontier.Count);
+                int c = frontier[idx];
+                // swap-remove for O(1)
+                frontier[idx] = frontier[frontier.Count - 1];
+                frontier.RemoveAt(frontier.Count - 1);
+
+                // If already claimed by someone else (race), skip
+                if (cellToPlate[c] != -1) continue;
+
+                // Claim it
+                cellToPlate[c] = chosenPlate;
+                plateSizes[chosenPlate]++;
+                claimed++;
+
+                // Add its unclaimed neighbors to this plate's frontier
+                foreach (var nb in g.VertexNeighbors[c])
+                {
+                    if (cellToPlate[nb] == -1 && !inFrontier[nb]) { frontier.Add(nb); inFrontier[nb] = true; }
+                }
+            }
+
+            // If any unclaimed remain (edge case), assign them to nearest plate by adjacency
+            if (claimed < N)
+            {
+                for (int i = 0; i < N; i++)
+                {
+                    if (cellToPlate[i] != -1) continue;
+                    // pick first neighbor's plate or random fallback
+                    int p = -1;
+                    foreach (var nb in g.VertexNeighbors[i]) { if (cellToPlate[nb] != -1) { p = cellToPlate[nb]; break; } }
+                    if (p == -1) p = rng.Next(0, K);
+                    cellToPlate[i] = p;
+                }
+            }
+
+            // --- 4) Build state
             state = new PlateState
             {
                 PlateCount = K,
@@ -121,10 +199,11 @@ namespace Globe.Tectonics
                 CellVel = new Vector3[N],
                 Elevation = new float[N],
             };
-
-            // Initialize base elevation per cell by plate kind
-            // (we don't know params here, so store zero; caller will do a base relax step on first update)
         }
+
+        // temp scratch lists (avoid GC). 
+        static readonly List<int> s_tempList = new List<int>(64);
+        static readonly List<int> s_minList = new List<int>(64);
 
         public static Vector3 RandomOnSphere(System.Random rng)
         {
