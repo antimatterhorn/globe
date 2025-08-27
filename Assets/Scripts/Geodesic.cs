@@ -10,7 +10,7 @@ using UnityEditor;
 public class GeodesicDualSphere : MonoBehaviour
 {
     [Header("Resolution & Display")]
-    [Range(1, 5)] public int frequency = 3;
+    [Range(1, 6)] public int frequency = 3;
     public float radius = 1f;
     public bool showGeodesic = true;
     public bool showDual = true;
