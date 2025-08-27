@@ -35,6 +35,8 @@ namespace Globe.Tectonics
         public float fixedMaxHeight = +1.0f;
         [Range(0.1f, 3f)] public float heightGamma = 1.0f; // curve the alpha response
 
+        [Header("Sub-plate Relief")]
+        public PlateTerrainParams terrainParams = new PlateTerrainParams();
 
         private GeodesicDualSphere _gen;
         private PlateState _state;
@@ -80,8 +82,7 @@ namespace Globe.Tectonics
             PlateSolver.UpdateVelocities(_gen.Dual, _state);
             PlateSolver.ClassifyBoundaries(_gen.Geodesic, _gen.Dual, _state, _boundaries);
             if (runSimulation)
-                PlateSolver.StepTopography(_gen.Geodesic, _gen.Dual, _state, _boundaries, _params);
-
+                PlateSolver.StepTopography(_gen.Geodesic, _gen.Dual, _state, _boundaries, _params, terrainParams, Time.time);
             ApplyColorsToDual();
         }
 

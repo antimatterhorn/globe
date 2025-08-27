@@ -923,7 +923,7 @@ MonoBehaviour:
   randomSeed: 12345
   minDegPerSec: 0
   maxDegPerSec: 1.2
-  continentalFraction: 0.633
+  continentalFraction: 0.227
   continentalBase: 0.6
   oceanicBase: -0.6
   uplift_CC: 1.2

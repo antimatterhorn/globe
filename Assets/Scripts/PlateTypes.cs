@@ -27,6 +27,25 @@ namespace Globe.Tectonics
         public int[] CellToPlate;      // length = numCells
         public Vector3[] CellVel;          // per-cell tangential velocity
         public float[] Elevation;        // per-cell elevation
+
+        public Vector3[] PlateNoiseOffset;   // length = PlateCount, random 3D offsets
+    }
+
+    public sealed class PlateTerrainParams
+    {
+        public float ContinentalAmp = 0.45f;   // base amplitude added inside continents
+        public float OceanicAmp = 0.18f;   // base amplitude inside oceans
+
+        public float NearBoundaryBoost = 0.6f; // extra relief within a few rings of boundaries
+        public int BoundaryRings = 2;    // graph distance in cell steps
+
+        public float Freq = 2.0f;              // noise frequency in 3D unit-sphere space
+        public int Octaves = 5;
+        public float Lacunarity = 1.9f;
+        public float Gain = 0.5f;
+
+        public bool Use4D = true;
+        public float TimeSpeed = 0.05f;        // how fast the 4th dimension moves
     }
 
     public struct BoundaryInfo
@@ -188,6 +207,17 @@ namespace Globe.Tectonics
                 }
             }
 
+            var offsets = new Vector3[K];
+            for (int k = 0; k < K; k++)
+            {
+                // random offset in 3D noise space so patterns differ per plate
+                offsets[k] = new Vector3(
+                    (float)rng.NextDouble() * 100f + 13.37f * k,
+                    (float)rng.NextDouble() * 100f + 42.42f * k,
+                    (float)rng.NextDouble() * 100f + 7.77f * k
+                );
+            }
+
             // --- 4) Build state
             state = new PlateState
             {
@@ -198,12 +228,130 @@ namespace Globe.Tectonics
                 CellToPlate = cellToPlate,
                 CellVel = new Vector3[N],
                 Elevation = new float[N],
+                PlateNoiseOffset = offsets,
             };
         }
 
         // temp scratch lists (avoid GC). 
         static readonly List<int> s_tempList = new List<int>(64);
         static readonly List<int> s_minList = new List<int>(64);
+
+        public static void ComputeBoundaryRings(GeodesicData g, PlateState st, int maxRings, int[] outRings)
+        {
+            int N = st.CellToPlate.Length;
+            for (int i = 0; i < N; i++) outRings[i] = int.MaxValue;
+
+            var queue = new System.Collections.Generic.Queue<int>();
+
+            // ring 0: cells that border a different plate
+            for (int i = 0; i < N; i++)
+            {
+                int p = st.CellToPlate[i];
+                foreach (var nb in g.VertexNeighbors[i])
+                {
+                    if (st.CellToPlate[nb] != p)
+                    {
+                        outRings[i] = 0;
+                        queue.Enqueue(i);
+                        break;
+                    }
+                }
+            }
+
+            // BFS expand up to maxRings
+            while (queue.Count > 0)
+            {
+                int c = queue.Dequeue();
+                int r = outRings[c];
+                if (r >= maxRings) continue;
+                foreach (var nb in g.VertexNeighbors[c])
+                {
+                    if (outRings[nb] > r + 1)
+                    {
+                        outRings[nb] = r + 1;
+                        queue.Enqueue(nb);
+                    }
+                }
+            }
+        }
+
+        // Replace FBM with this version (no Simplex dependency)
+        static float FBM(Vector3 p3, float t, PlateTerrainParams prm)
+        {
+            // Time drift: move the sample point through 3D space
+            Vector3 p = p3 + new Vector3(0.73f * t * (prm.Use4D ? prm.TimeSpeed : 0f),
+                                         1.21f * t * (prm.Use4D ? prm.TimeSpeed : 0f),
+                                         0.53f * t * (prm.Use4D ? prm.TimeSpeed : 0f));
+
+            float sum = 0f, amp = 1f, freq = prm.Freq;
+            for (int o = 0; o < Mathf.Max(1, prm.Octaves); o++)
+            {
+                float n = Fake3D(p * freq); // ~[-1,1]
+                sum += n * amp;
+                amp *= prm.Gain;
+                freq *= prm.Lacunarity;
+            }
+
+            // normalize geometric series
+            float norm = (1f - Mathf.Pow(prm.Gain, Mathf.Max(1, prm.Octaves))) / (1f - prm.Gain);
+            if (norm <= 1e-6f) norm = 1f;
+            return sum / norm; // ~[-1,1]
+        }
+
+        // Perlin-based "fake 3D" in [-1,1] by blending three orthogonal 2D samples
+        static float Fake3D(Vector3 p)
+        {
+            float a = Mathf.PerlinNoise(p.x, p.y);
+            float b = Mathf.PerlinNoise(p.y, p.z);
+            float c = Mathf.PerlinNoise(p.z, p.x);
+            return ((a + b + c) / 3f) * 2f - 1f; // to [-1,1]
+        }
+
+
+        public static void AddSubplateRelief(
+            DualData dual,
+            GeodesicData g,
+            PlateState st,
+            PlateTerrainParams prm,
+            float timeSeconds,
+            float strength,                  // how hard to blend this frame (e.g., 1.0f)
+            int[] scratchRings               // temp array length = cell count
+        )
+        {
+            int N = st.CellToPlate.Length;
+            if (scratchRings == null || scratchRings.Length != N) return;
+
+            ComputeBoundaryRings(g, st, prm.BoundaryRings, scratchRings);
+
+            // 4th noise dimension time
+            float t = prm.Use4D ? timeSeconds * prm.TimeSpeed : 0f;
+
+            for (int i = 0; i < N; i++)
+            {
+                int p = st.CellToPlate[i];
+                Vector3 r = dual.CellPositions[i].normalized;
+
+                // per-plate offset to decorrelate patterns
+                Vector3 offs = st.PlateNoiseOffset[p];
+                float baseAmp = (st.PlateKinds[p] == PlateKind.Continental) ? prm.ContinentalAmp : prm.OceanicAmp;
+
+                // near-boundary boost (0 at far interior, up to NearBoundaryBoost at ring 0)
+                int ring = scratchRings[i];
+                float near = 0f;
+                if (ring <= prm.BoundaryRings)
+                {
+                    float u = 1f - (ring / Mathf.Max(1f, (float)prm.BoundaryRings)); // 1 at ring 0 → 0 at max
+                    near = u * prm.NearBoundaryBoost;
+                }
+
+                float h = FBM(r + offs, t, prm);        // [-1,1]
+                float amp = baseAmp + near;             // amplitude per cell
+                float delta = h * amp * strength;       // signed
+
+                // Add gently: treat sub-plate relief as a source term toward that “detail” field
+                st.Elevation[i] += delta * 0.0f; // If you want to add directly, set multiplier; otherwise accumulate in StepTopography below
+            }
+        }
 
         public static Vector3 RandomOnSphere(System.Random rng)
         {
@@ -286,13 +434,14 @@ namespace Globe.Tectonics
             DualData dual,
             PlateState st,
             List<BoundaryInfo> boundaries,
-            PlateParams prm)
+            PlateParams prm,
+            PlateTerrainParams tprm,
+            float timeSeconds)
         {
             int N = st.Elevation.Length;
 
-            // 1) Accumulate sources/sinks from boundaries
+            // 1) Boundary sources/sinks
             var source = new float[N];
-
             foreach (var b in boundaries)
             {
                 if (b.Kind == BoundaryType.Convergent)
@@ -300,7 +449,7 @@ namespace Globe.Tectonics
                     int pa = st.CellToPlate[b.A];
                     int pb = st.CellToPlate[b.B];
                     var ka = st.PlateKinds[pa];
-                    var kbKind = st.PlateKinds[pb]; // <-- renamed so no conflict
+                    var kbKind = st.PlateKinds[pb];
 
                     if (ka == PlateKind.Continental && kbKind == PlateKind.Continental)
                     {
@@ -334,20 +483,45 @@ namespace Globe.Tectonics
                 }
             }
 
-            // 2) Base level relaxation (continental high, oceanic low)
+            // --- Sub-plate relief as an additional source term ---
+            if (_ringsScratch == null || _ringsScratch.Length != N) _ringsScratch = new int[N];
+            ComputeBoundaryRings(g, st, tprm.BoundaryRings, _ringsScratch);
+
+            for (int i = 0; i < N; i++)
+            {
+                int p = st.CellToPlate[i];
+                Vector3 r = dual.CellPositions[i].normalized;
+                Vector3 offs = st.PlateNoiseOffset[p];
+
+                float t = tprm.Use4D ? timeSeconds * tprm.TimeSpeed : 0f;
+                float h = FBM(r + offs, t, tprm); // ~[-1,1]
+
+                float baseAmp = (st.PlateKinds[p] == PlateKind.Continental) ? tprm.ContinentalAmp : tprm.OceanicAmp;
+
+                float near = 0f;
+                int ring = _ringsScratch[i];
+                if (ring <= tprm.BoundaryRings)
+                {
+                    float u = 1f - (ring / Mathf.Max(1f, (float)tprm.BoundaryRings));
+                    near = u * tprm.NearBoundaryBoost;
+                }
+
+                float amp = baseAmp + near;
+                source[i] += h * amp; // inject into source
+            }
+
+            // 2) Base level relaxation
             var baseLevel = new float[N];
             for (int i = 0; i < N; i++)
             {
                 int p = st.CellToPlate[i];
-                baseLevel[i] = (st.PlateKinds[p] == PlateKind.Continental)
-                    ? prm.ContinentalBase
-                    : prm.OceanicBase;
+                baseLevel[i] = (st.PlateKinds[p] == PlateKind.Continental) ? prm.ContinentalBase : prm.OceanicBase;
             }
 
-            // 3) Explicit diffusion + base relax + sources
+            // 3) Diffusion + base relax + sources
             float dt = prm.Dt;
             float kDiff = prm.Diffusion;
-            float kBase = prm.BaseRelax;   // renamed var so no clash
+            float kBase = prm.BaseRelax;
 
             var next = new float[N];
             for (int i = 0; i < N; i++)
@@ -358,12 +532,12 @@ namespace Globe.Tectonics
                     lap += (st.Elevation[nbrs[t]] - st.Elevation[i]);
 
                 float towardBase = (baseLevel[i] - st.Elevation[i]) * kBase;
-
                 next[i] = st.Elevation[i] + (source[i] + kDiff * lap + towardBase) * dt;
             }
 
-            // Commit
             for (int i = 0; i < N; i++) st.Elevation[i] = next[i];
         }
+        static int[] _ringsScratch;
     }
+
 }
