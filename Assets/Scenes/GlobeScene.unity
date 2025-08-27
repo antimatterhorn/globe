@@ -679,7 +679,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!135 &1422812693
 SphereCollider:
   m_ObjectHideFlags: 0
@@ -885,7 +885,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a17a4430a48d35a488f80eab6860134f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  frequency: 3
+  frequency: 5
   radius: 1
   showGeodesic: 1
   showDual: 1
@@ -923,7 +923,7 @@ MonoBehaviour:
   randomSeed: 12345
   minDegPerSec: 0
   maxDegPerSec: 1.2
-  continentalFraction: 0.5
+  continentalFraction: 0.633
   continentalBase: 0.6
   oceanicBase: -0.6
   uplift_CC: 1.2
@@ -937,6 +937,10 @@ MonoBehaviour:
   dt: 0.02
   runSimulation: 1
   colorBoundaries: 1
+  useFixedHeightRange: 0
+  fixedMinHeight: -1
+  fixedMaxHeight: 1
+  heightGamma: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

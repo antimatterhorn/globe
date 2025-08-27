@@ -29,6 +29,13 @@ namespace Globe.Tectonics
         public bool runSimulation = true;
         public bool colorBoundaries = true;
 
+        [Header("Height (Vertex Alpha)")]
+        public bool useFixedHeightRange = false; // if false, auto-normalize per frame
+        public float fixedMinHeight = -1.0f;      // used only when useFixedHeightRange = true
+        public float fixedMaxHeight = +1.0f;
+        [Range(0.1f, 3f)] public float heightGamma = 1.0f; // curve the alpha response
+
+
         private GeodesicDualSphere _gen;
         private PlateState _state;
         private PlateParams _params = new PlateParams();
@@ -147,34 +154,51 @@ namespace Globe.Tectonics
 
             var colors = new Color[dual.DualMeshVertices.Count];
 
-            // Normalize elevation -> color
-            float min = float.PositiveInfinity, max = float.NegativeInfinity;
-            for (int i = 0; i < _state.Elevation.Length; i++)
+            // ---- Height normalization (for Alpha) ----
+            float min, max;
+            if (useFixedHeightRange && fixedMaxHeight > fixedMinHeight)
             {
-                float h = _state.Elevation[i];
-                if (h < min) min = h; if (h > max) max = h;
+                min = fixedMinHeight; max = fixedMaxHeight;
             }
-            float range = Mathf.Max(1e-6f, max - min);
+            else
+            {
+                min = float.PositiveInfinity; max = float.NegativeInfinity;
+                for (int i = 0; i < _state.Elevation.Length; i++)
+                {
+                    float h = _state.Elevation[i];
+                    if (h < min) min = h;
+                    if (h > max) max = h;
+                }
+                // Guard for flat fields
+                if (Mathf.Abs(max - min) < 1e-8f) { min -= 0.5f; max += 0.5f; }
+            }
+            float invRange = 1f / (max - min);
 
+            // ---- Optional boundary overlays (for tint only) ----
             byte[] boundaryCode = null;
             if (colorBoundaries)
             {
                 boundaryCode = new byte[_state.Elevation.Length];
                 foreach (var b in _boundaries)
                 {
+                    // store strongest kind seen on this cell for simple tinting
                     boundaryCode[b.A] = (byte)Mathf.Max(boundaryCode[b.A], (byte)b.Kind);
                     boundaryCode[b.B] = (byte)Mathf.Max(boundaryCode[b.B], (byte)b.Kind);
                 }
             }
 
+            // ---- Build per-vertex colors fan-by-fan ----
             for (int cell = 0; cell < dual.Fans.Count; cell++)
             {
                 var fan = dual.Fans[cell];
                 if (fan.CenterVertex < 0) continue;
 
-                float t = (_state.Elevation[cell] - min) / range;
-                Color baseCol = ElevationGradient(t);
+                // Height -> alpha
+                float raw = (_state.Elevation[cell] - min) * invRange; // 0..1
+                float a = Mathf.Pow(Mathf.Clamp01(raw), heightGamma);  // curved response
 
+                // RGB tint (you can change this: here we use elevation gradient + boundary tint)
+                Color baseCol = ElevationGradient(raw); // pretty color for viewing
                 if (colorBoundaries && boundaryCode != null && boundaryCode[cell] != 0)
                 {
                     var kind = (BoundaryType)boundaryCode[cell];
@@ -188,9 +212,11 @@ namespace Globe.Tectonics
                     baseCol = Color.Lerp(baseCol, tint, 0.35f);
                 }
 
-                colors[fan.CenterVertex] = baseCol;
+                // Assign center + rim vertices
+                Color rgba = new Color(baseCol.r, baseCol.g, baseCol.b, a);
+                colors[fan.CenterVertex] = rgba;
                 for (int k = 0; k < fan.RimCount; k++)
-                    colors[fan.RimStart + k] = baseCol;
+                    colors[fan.RimStart + k] = rgba;
             }
 
             var dualGO = transform.Find("Dual (tiles)");
@@ -198,10 +224,9 @@ namespace Globe.Tectonics
             var mf = dualGO.GetComponent<MeshFilter>();
             if (!mf || !mf.sharedMesh) return;
             var mesh = mf.sharedMesh;
-            if (mesh.colors == null || mesh.colors.Length != colors.Length)
-                mesh.colors = colors;
-            else
-                mesh.SetColors(colors);
+
+            // Push colors
+            mesh.SetColors(colors);
         }
 
         private static Color ElevationGradient(float t)
