@@ -919,8 +919,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 33bc8af34d0890244802f69fc1b69416, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  seedCount: 12
-  randomSeed: 12345
+  seedCount: 15
+  randomSeed: 12376
   minDegPerSec: 0
   maxDegPerSec: 1.2
   continentalFraction: 0.214
@@ -931,11 +931,11 @@ MonoBehaviour:
   stressMid: {r: 0.7796366, g: 1, b: 0.6273585, a: 1}
   stressHot: {r: 1, g: 0.25, b: 0.25, a: 1}
   stressTint: 1
-  stressScale: 0.77
-  stressBlurIterations: 5
-  stressClipQuantile: 0.741
+  stressScale: 0.51
+  stressBlurIterations: 53
+  stressClipQuantile: 0.863
   enableNoiseGeneration: 1
-  noiseSeed: 424242
+  noiseSeed: 424500
   noiseFreq: 2.3
   noiseOctaves: 9
   noiseLacunarity: 1.9
@@ -945,7 +945,7 @@ MonoBehaviour:
   noiseHighColor: {r: 0.9, g: 0.9, b: 0.9, a: 1}
   noiseScale: 0.5
   oceanHeight: 0.45
-  oceanSurfaceColor: {r: 0.1, g: 0.3, b: 0.6, a: 1}
+  oceanSurfaceColor: {r: 0, g: 0.059475772, b: 0.31132078, a: 1}
   landLowColor: {r: 0.11320752, g: 0.07417044, b: 0, a: 1}
   landHighColor: {r: 0.9, g: 0.9, b: 0.8, a: 1}
   landVisualScale: 1
