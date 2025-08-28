@@ -340,7 +340,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: d3f6daeec5b64e9488996dca9387e1d2, type: 2}
+  - {fileID: 2100000, guid: e0791c8e7f3986240b3494c5e0631159, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -809,7 +809,7 @@ MeshRenderer:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1950549646}
-  m_Enabled: 1
+  m_Enabled: 0
   m_CastShadows: 1
   m_ReceiveShadows: 1
   m_DynamicOccludee: 1
@@ -885,9 +885,9 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: a17a4430a48d35a488f80eab6860134f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  frequency: 5
+  frequency: 6
   radius: 1
-  showGeodesic: 1
+  showGeodesic: 0
   showDual: 1
   forceRecreateChildren: 0
 --- !u!4 &2022417444
@@ -916,31 +916,39 @@ MonoBehaviour:
   m_GameObject: {fileID: 2022417442}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: c228d98352acf0947a4cf65dd9d36396, type: 3}
+  m_Script: {fileID: 11500000, guid: 33bc8af34d0890244802f69fc1b69416, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
   seedCount: 12
   randomSeed: 12345
   minDegPerSec: 0
   maxDegPerSec: 1.2
-  continentalFraction: 0.227
-  continentalBase: 0.6
-  oceanicBase: -0.6
-  uplift_CC: 1.2
-  uplift_CO: 0.9
-  uplift_OO: 0.6
-  trench_CO: 0.7
-  trench_OO: 0.4
-  divergenceSubs: 0.25
-  diffusion: 0.6
-  baseRelax: 0.05
-  dt: 0.02
-  runSimulation: 1
-  colorBoundaries: 1
-  useFixedHeightRange: 0
-  fixedMinHeight: -1
-  fixedMaxHeight: 1
-  heightGamma: 1
+  continentalFraction: 0.214
+  view: 3
+  continentalColor: {r: 0.75, g: 0.65, b: 0.5, a: 1}
+  oceanicColor: {r: 0.15, g: 0.35, b: 0.9, a: 1}
+  stressCold: {r: 0.2, g: 0.45, b: 1, a: 1}
+  stressMid: {r: 0.7796366, g: 1, b: 0.6273585, a: 1}
+  stressHot: {r: 1, g: 0.25, b: 0.25, a: 1}
+  stressTint: 1
+  stressScale: 0.77
+  stressBlurIterations: 5
+  stressClipQuantile: 0.741
+  enableNoiseGeneration: 1
+  noiseSeed: 424242
+  noiseFreq: 2.3
+  noiseOctaves: 9
+  noiseLacunarity: 1.9
+  noiseGain: 0.462
+  perPlateOffsets: 1
+  noiseLowColor: {r: 0.1, g: 0.1, b: 0.1, a: 1}
+  noiseHighColor: {r: 0.9, g: 0.9, b: 0.9, a: 1}
+  noiseScale: 0.5
+  oceanHeight: 0.45
+  oceanSurfaceColor: {r: 0.1, g: 0.3, b: 0.6, a: 1}
+  landLowColor: {r: 0.11320752, g: 0.07417044, b: 0, a: 1}
+  landHighColor: {r: 0.9, g: 0.9, b: 0.8, a: 1}
+  landVisualScale: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
