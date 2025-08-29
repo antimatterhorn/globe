@@ -1,4 +1,4 @@
-using System.Linq; // ToArray()
+﻿using System.Linq; // ToArray()
 using UnityEngine;
 
 namespace Globe.Tectonics
@@ -46,7 +46,7 @@ namespace Globe.Tectonics
         }
 
         // ----- Stress -----
-        private void ComputeStressIfNeeded()
+        private void ComputeStress()
         {
             if (_state == null || _gen == null || _gen.Dual == null || _gen.Geodesic == null) return;
             int n = _gen.Dual.CellPositions.Count;
@@ -65,16 +65,23 @@ namespace Globe.Tectonics
         }
 
         // ----- Noise -----
-        private void ComputeNoiseIfNeeded()
+        // Keep this if other code still calls ComputeNoiseIfNeeded()
+        private void ComputeNoiseIfNeeded() => ComputeNoise();
+
+        // ----- Noise -----
+        private void ComputeNoise()
         {
             if (!enableNoiseGeneration) return;
             if (_gen == null || _gen.Dual == null || _state == null) return;
 
             int n = _gen.Dual.CellPositions.Count;
             if (n <= 0) return;
+
+            // If you want to force a rebuild whenever params change, keep this guard.
+            // It’s fine to leave; just make sure params toggling invalidates caches.
             if (_noise01 != null && _noise01.Length == n && _plateNoiseOffset != null) return;
 
-            // per-plate offsets (or single global)
+            // --- Offsets (keep or swap for the StableSeed version I posted earlier) ---
             if (perPlateOffsets)
             {
                 var rng = new System.Random(noiseSeed);
@@ -101,8 +108,8 @@ namespace Globe.Tectonics
 
             _noise01 = new float[n];
 
-            // Build raw fBm and normalize to [0..1]
-            float[] raw = new float[n];
+            // --- Build raw fBm ---
+            var raw = new float[n];
             float minv = float.PositiveInfinity, maxv = float.NegativeInfinity;
 
             for (int i = 0; i < n; i++)
@@ -111,38 +118,60 @@ namespace Globe.Tectonics
                 Vector3 r = _gen.Dual.CellPositions[i].normalized;
                 Vector3 offs = perPlateOffsets ? _plateNoiseOffset[plate] : _plateNoiseOffset[0];
 
-                float h = FBM_NoTime(r + offs, noiseFreq, noiseOctaves, noiseLacunarity, noiseGain); // ~[-1,1]
+                float h = FBM_NoTime(r + offs, noiseFreq, noiseOctaves, noiseLacunarity); // ~[-1,1]
                 raw[i] = h;
                 if (h < minv) minv = h;
                 if (h > maxv) maxv = h;
             }
 
+            // --- Normalize to [0..1] FIRST ---
             float range = maxv - minv;
-            if (range < 1e-6f) range = 1f;
+            if (range < 1e-6f)
+            {
+                // Degenerate case: all samples equal → just set mid-gray
+                for (int i = 0; i < n; i++) _noise01[i] = 0.5f;
+            }
+            else
+            {
+                for (int i = 0; i < n; i++)
+                    _noise01[i] = Mathf.Clamp01((raw[i] - minv) / range);
+            }
+
+            // --- Then tone-map: gamma on 0..1, then contrast around 0.5 ---
+            float g = Mathf.Max(0.1f, noiseGamma);
+            float c = Mathf.Max(0f, noiseContrast);
+
             for (int i = 0; i < n; i++)
-                _noise01[i] = Mathf.Clamp01((raw[i] - minv) / range);
+            {
+                float u = _noise01[i];           // 0..1
+                u = Mathf.Pow(u, g);             // gamma
+                u = 0.5f + (u - 0.5f) * c;       // contrast
+                _noise01[i] = Mathf.Clamp01(u);
+            }
         }
 
-        // fBm and 3D-perlin helpers (static, no time)
-        private static float FBM_NoTime(Vector3 p, float freq, int octaves, float lacunarity, float gain)
+        // fBm (static, no time) with fixed octave falloff g=0.5, normalized to ~[-1,1]
+        private static float FBM_NoTime(Vector3 p, float freq, int octaves, float lacunarity)
         {
             float sum = 0f, amp = 1f, f = Mathf.Max(1e-6f, freq);
             int O = Mathf.Max(1, octaves);
-            float g = Mathf.Clamp01(gain);
+            const float g = 0.5f;                       // fixed spectral falloff
             float lac = Mathf.Max(1.0001f, lacunarity);
 
             for (int o = 0; o < O; o++)
             {
-                float n = Fake3DPerlin(p * f); // [-1,1]
+                float n = Fake3DPerlin(p * f);          // [-1,1]
                 sum += n * amp;
                 amp *= g;
                 f *= lac;
             }
 
+            // geometric-series normalization for g=0.5
             float norm = (1f - Mathf.Pow(g, O)) / (1f - g);
             if (norm < 1e-6f) norm = 1f;
-            return sum / norm;
+            return sum / norm;                           // ~[-1,1]
         }
+
 
         private static float Fake3DPerlin(Vector3 p)
         {

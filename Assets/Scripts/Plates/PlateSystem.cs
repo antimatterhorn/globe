@@ -35,14 +35,20 @@ namespace Globe.Tectonics
         [Min(0)] public int stressBlurIterations = 1;          // 0 = crisp edges
         [Range(0f, 1f)] public float stressClipQuantile = 0.98f;  // robust normalization
 
-        [Header("Noise (static, no time)")]
+        [Header("Noise")]
         public bool enableNoiseGeneration = true;
         public int noiseSeed = 424242;
         public float noiseFreq = 2.0f;
         [Min(1)] public int noiseOctaves = 5;
         public float noiseLacunarity = 1.9f;
-        [Range(0f, 1f)] public float noiseGain = 0.5f;
         public bool perPlateOffsets = true;
+
+        [Header("Noise Tone Mapping")]
+        [Tooltip("Contrast around mid-gray (1 = neutral).")]
+        [Range(0f, 3f)] public float noiseContrast = 1.0f;
+
+        [Tooltip("Gamma on [0..1] noise (1 = neutral, <1 brighter, >1 darker).")]
+        [Range(0.1f, 3f)] public float noiseGamma = 1.0f;
 
         [Header("Noise View Colors")]
         public Color noiseLowColor = new Color(0.1f, 0.1f, 0.1f);
@@ -157,10 +163,10 @@ namespace Globe.Tectonics
         private void ComputeNeededLayers()
         {
             if (view == ViewMode.Stress || view == ViewMode.Combined)
-                ComputeStressIfNeeded();
+                ComputeStress();
 
             if (enableNoiseGeneration && (view == ViewMode.Noise || view == ViewMode.Combined))
-                ComputeNoiseIfNeeded();
+                ComputeNoise();
         }
     }
 }
