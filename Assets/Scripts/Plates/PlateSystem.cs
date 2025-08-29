@@ -58,7 +58,7 @@ namespace Globe.Tectonics
 
         [Header("Combined View")]
         [Tooltip("Anything at/below this is drawn as flat ocean color.")]
-        public float oceanHeight = 0.0f;
+        [Range(-1f, 1f)] public float oceanHeight = 0.45f;
         public Color oceanSurfaceColor = new Color(0.1f, 0.3f, 0.6f);
         public Color landLowColor = new Color(0.3f, 0.6f, 0.2f);
         public Color landHighColor = new Color(0.9f, 0.9f, 0.8f);
