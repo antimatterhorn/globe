@@ -758,6 +758,7 @@ GameObject:
   - component: {fileID: 2022417444}
   - component: {fileID: 2022417443}
   - component: {fileID: 2022417445}
+  - component: {fileID: 2022417446}
   m_Layer: 0
   m_Name: Globe
   m_TagString: Untagged
@@ -842,6 +843,33 @@ MonoBehaviour:
   landLowColor: {r: 0.11320752, g: 0.07417044, b: 0, a: 1}
   landHighColor: {r: 0.9, g: 0.9, b: 0.8, a: 1}
   landVisualScale: 1
+--- !u!114 &2022417446
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2022417442}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8689b72a751f9bd4187106d8647cbc6f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  prm: {fileID: 11400000, guid: 95902378724e98947ba1ee9670bd685d, type: 2}
+  runSimulation: 1
+  timeScaleOverride: -1
+  buildFallbackKnn: 0
+  knn: 6
+  buildFallbackGrid: 1
+  targetBinLoad: 24
+  fallbackK: 6
+  buildFallbackAsCoroutine: 1
+  fallbackBuildBudgetPerFrame: 500
+  accumulateRain: 1
+  accumulationWindowSeconds: 86400
+  gizmosWind: 1
+  gizmoWindScale: 0.1
+  gizmoSphereRadius: 1
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
